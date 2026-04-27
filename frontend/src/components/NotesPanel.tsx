@@ -6,6 +6,7 @@ import { Button, Panel, EmptyState } from "./ui";
 import { useSubmitNoteMutation } from "@/lib/api/tradesApi";
 import { formatDateTime } from "@/lib/format";
 import { BREAK_STATUSES, type Note, type TradeStatus } from "@/lib/schemas";
+import { isReplyNote } from "./ComposerDrawer";
 
 const List = styled.ol`
   margin: 0 0 ${({ theme }) => theme.space.lg};
@@ -20,8 +21,7 @@ const Item = styled.li`
   border: 1px solid ${({ theme }) => theme.colors.border};
   background: ${({ theme }) => theme.colors.bg};
   border-radius: ${({ theme }) => theme.radii.md};
-  padding: ${({ theme }) =>
-    `${theme.space.md} ${theme.space.lg}`};
+  padding: ${({ theme }) => `${theme.space.md} ${theme.space.lg}`};
 
   p {
     margin: 0;
@@ -35,6 +35,22 @@ const Item = styled.li`
     font-size: ${({ theme }) => theme.fontSizes.xs};
     color: ${({ theme }) => theme.colors.textFaint};
   }
+`;
+
+const ReplyHeader = styled.div`
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: ${({ theme }) => theme.fontSizes.xs};
+  color: ${({ theme }) => theme.colors.accent};
+  font-weight: ${({ theme }) => theme.weights.medium};
+  margin-bottom: ${({ theme }) => theme.space.xs};
+`;
+
+const ReplyMeta = styled.div`
+  margin-top: 4px;
+  font-size: ${({ theme }) => theme.fontSizes.xs};
+  color: ${({ theme }) => theme.colors.textFaint};
 `;
 
 const Form = styled.form`
@@ -51,8 +67,7 @@ const Form = styled.form`
   textarea {
     width: 100%;
     min-height: 80px;
-    padding: ${({ theme }) =>
-      `${theme.space.sm} ${theme.space.md}`};
+    padding: ${({ theme }) => `${theme.space.sm} ${theme.space.md}`};
     border: 1px solid ${({ theme }) => theme.colors.border};
     border-radius: ${({ theme }) => theme.radii.md};
     background: ${({ theme }) => theme.colors.surface};
@@ -119,14 +134,18 @@ export function NotesPanel({ tradeId, status, notes }: NotesPanelProps) {
         />
       ) : (
         <List>
-          {notes.map((n) => (
-            <Item key={n.id}>
-              <p>{n.content}</p>
-              <time dateTime={n.created_at}>
-                {formatDateTime(n.created_at)}
-              </time>
-            </Item>
-          ))}
+          {notes.map((n) =>
+            isReplyNote(n.content) ? (
+              <ReplyNoteCard key={n.id} note={n} />
+            ) : (
+              <Item key={n.id}>
+                <p>{n.content}</p>
+                <time dateTime={n.created_at}>
+                  {formatDateTime(n.created_at)}
+                </time>
+              </Item>
+            ),
+          )}
         </List>
       )}
 
@@ -142,7 +161,9 @@ export function NotesPanel({ tradeId, status, notes }: NotesPanelProps) {
           />
           <div className="row">
             <span className="count">{draft.length} / 500</span>
-            <Button type="submit">Save note</Button>
+            <Button type="submit" disabled={isLoading || !draft.trim()}>
+              {isLoading ? "Saving…" : "Save note"}
+            </Button>
           </div>
           {error ? (
             <p className="error">
@@ -151,9 +172,63 @@ export function NotesPanel({ tradeId, status, notes }: NotesPanelProps) {
                 : "Something went wrong. Please try again."}
             </p>
           ) : null}
-          {isLoading ? null : null}
         </Form>
       ) : null}
     </Panel>
+  );
+}
+
+// A note created by ComposerDrawer is a multi-line record: header lines
+// (`[Reply sent] ts`, From/To/Cc/Subject), a blank-line separator, then
+// the body. Subject becomes the card heading; the body renders inline.
+function ReplyNoteCard({ note }: { note: Note }) {
+  const [headers, ...bodyChunks] = note.content.split("\n\n");
+  const headerLines = headers.split("\n");
+  const headerValue = (key: string) =>
+    headerLines
+      .find((l) => l.startsWith(`${key}:`))
+      ?.slice(key.length + 1)
+      .trim();
+  const subject = headerValue("Subject") ?? "(no subject)";
+  const to = headerValue("To");
+  const cc = headerValue("Cc");
+  const body = bodyChunks.join("\n\n");
+
+  return (
+    <Item>
+      <ReplyHeader>
+        <ReplyIcon /> Reply sent to counterparty
+      </ReplyHeader>
+      <p style={{ fontWeight: 500 }}>{subject}</p>
+      {to && (
+        <ReplyMeta>
+          To: {to}
+          {cc ? ` · Cc: ${cc}` : null}
+        </ReplyMeta>
+      )}
+      {body && <p style={{ marginTop: 8 }}>{body}</p>}
+      <time dateTime={note.created_at}>{formatDateTime(note.created_at)}</time>
+    </Item>
+  );
+}
+
+function ReplyIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden
+      style={{ flexShrink: 0 }}
+    >
+      <path
+        d="M6 4L2 8l4 4M2.5 8H10a4 4 0 014 4v.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }

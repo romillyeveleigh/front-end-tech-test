@@ -49,7 +49,10 @@ export const tradesApi = createApi({
         body: { content },
       }),
       transformResponse: (raw: unknown) => NoteSchema.parse(raw),
-      invalidatesTags: ["Trades"],
+      invalidatesTags: (_result, _err, { tradeId }) => [
+        { type: "Trade", id: tradeId },
+        "Trades",
+      ],
     }),
   }),
 });
