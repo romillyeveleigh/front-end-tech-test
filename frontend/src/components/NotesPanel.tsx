@@ -5,8 +5,12 @@ import styled from "styled-components";
 import { Button, Panel, EmptyState } from "./ui";
 import { useSubmitNoteMutation } from "@/lib/api/tradesApi";
 import { formatDateTime } from "@/lib/format";
+import {
+  isReplyNote,
+  MAX_NOTE_LENGTH,
+  parseReplyNote,
+} from "@/lib/replyNote";
 import { BREAK_STATUSES, type Note, type TradeStatus } from "@/lib/schemas";
-import { isReplyNote } from "./ComposerDrawer";
 
 const List = styled.ol`
   margin: 0 0 ${({ theme }) => theme.space.lg};
@@ -157,10 +161,12 @@ export function NotesPanel({ tradeId, status, notes }: NotesPanelProps) {
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             placeholder="Add a note…"
-            maxLength={500}
+            maxLength={MAX_NOTE_LENGTH}
           />
           <div className="row">
-            <span className="count">{draft.length} / 500</span>
+            <span className="count">
+              {draft.length} / {MAX_NOTE_LENGTH}
+            </span>
             <Button type="submit" disabled={isLoading || !draft.trim()}>
               {isLoading ? "Saving…" : "Save note"}
             </Button>
@@ -178,21 +184,8 @@ export function NotesPanel({ tradeId, status, notes }: NotesPanelProps) {
   );
 }
 
-// A note created by ComposerDrawer is a multi-line record: header lines
-// (`[Reply sent] ts`, From/To/Cc/Subject), a blank-line separator, then
-// the body. Subject becomes the card heading; the body renders inline.
 function ReplyNoteCard({ note }: { note: Note }) {
-  const [headers, ...bodyChunks] = note.content.split("\n\n");
-  const headerLines = headers.split("\n");
-  const headerValue = (key: string) =>
-    headerLines
-      .find((l) => l.startsWith(`${key}:`))
-      ?.slice(key.length + 1)
-      .trim();
-  const subject = headerValue("Subject") ?? "(no subject)";
-  const to = headerValue("To");
-  const cc = headerValue("Cc");
-  const body = bodyChunks.join("\n\n");
+  const { subject, to, cc, body } = parseReplyNote(note.content);
 
   return (
     <Item>

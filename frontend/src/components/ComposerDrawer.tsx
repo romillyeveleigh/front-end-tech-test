@@ -6,332 +6,10 @@ import { Button, Spinner } from "./ui";
 import { useSubmitNoteMutation } from "@/lib/api/tradesApi";
 import type { Email, TradeDetail } from "@/lib/schemas";
 import { formatDateTime } from "@/lib/format";
+import { buildReplyNote, MAX_NOTE_LENGTH } from "@/lib/replyNote";
 
 const CURRENT_USER = "trader@hedgefund.com";
-const REPLY_NOTE_PREFIX = "[Reply sent]";
-// Mirrors backend NoteCreate.content max_length in src/models.py.
-const MAX_NOTE_LENGTH = 500;
 const LOW_BODY_BUDGET = 50;
-
-interface ComposerDrawerProps {
-  trade: TradeDetail;
-  onClose: () => void;
-  onSent?: () => void;
-}
-
-export function ComposerDrawer({ trade, onClose, onSent }: ComposerDrawerProps) {
-  const emails = trade.emails;
-  const [to, setTo] = useState("");
-  const [cc, setCc] = useState("");
-  const [showCc, setShowCc] = useState(false);
-  const [subject, setSubject] = useState(
-    `[${trade.trade_id}] ${trade.counterparty_name} — `,
-  );
-  const [body, setBody] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  const [submitNote, { isLoading }] = useSubmitNoteMutation();
-  const bodyRef = useRef<HTMLTextAreaElement>(null);
-
-  // Capture the element that opened the drawer so we can return focus on close.
-  const previouslyFocused = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    previouslyFocused.current = document.activeElement as HTMLElement | null;
-    bodyRef.current?.focus();
-
-    // Lock body scroll while the drawer is open.
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    return () => {
-      document.body.style.overflow = prevOverflow;
-      previouslyFocused.current?.focus?.();
-    };
-  }, []);
-
-  function validateEmails(s: string) {
-    if (!s.trim()) return true;
-    return s
-      .split(",")
-      .map((p) => p.trim())
-      .every((p) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p));
-  }
-
-  const buildNoteContent = (bodyText: string): string =>
-    [
-      `${REPLY_NOTE_PREFIX} ${formatDateTime(new Date().toISOString())}`,
-      `From: ${CURRENT_USER}`,
-      `To:   ${to}`,
-      cc ? `Cc:   ${cc}` : null,
-      `Subject: ${subject}`,
-      "", // blank-line separator before body — must survive the filter
-      bodyText,
-    ]
-      .filter((l) => l !== null)
-      .join("\n");
-
-  const headerLen = buildNoteContent("").length;
-  const bodyMax = Math.max(0, MAX_NOTE_LENGTH - headerLen);
-
-  const budgetError =
-    bodyMax === 0
-      ? "Recipients/subject already use the full message budget. Shorten them to add a body."
-      : null;
-  const displayError = budgetError ?? error;
-
-  async function send() {
-    if (isLoading) return;
-    setError(null);
-    if (!to.trim()) return setError("Enter at least one recipient.");
-    if (!validateEmails(to) || !validateEmails(cc))
-      return setError("One of the addresses doesn't look valid.");
-    if (!subject.trim()) return setError("Subject is required.");
-    if (!body.trim()) return setError("Message body can't be empty.");
-
-    const noteContent = buildNoteContent(body);
-    if (noteContent.length > MAX_NOTE_LENGTH) {
-      return setError("Message is too long. Shorten the body or recipients.");
-    }
-
-    const result = await submitNote({
-      tradeId: trade.id,
-      content: noteContent,
-    });
-    if ("error" in result) {
-      setError("Couldn't log the message. Try again.");
-      return;
-    }
-    onSent?.();
-    onClose();
-  }
-
-  // Guard against accidentally discarding a draft. Confirm only when there's
-  // user-typed content — the prefilled subject doesn't count.
-  function requestClose() {
-    if (body.trim() || to.trim() || cc.trim()) {
-      if (!window.confirm("Discard this draft?")) return;
-    }
-    onClose();
-  }
-
-  function onKey(e: React.KeyboardEvent) {
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-      e.preventDefault();
-      void send();
-    }
-  }
-
-  // Escape closes from anywhere in the document, not only when focus is
-  // inside the drawer (e.g. user has tabbed out). Goes through requestClose
-  // so an in-progress draft isn't silently lost.
-  useEffect(() => {
-    const onDocKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        requestClose();
-      }
-    };
-    document.addEventListener("keydown", onDocKey);
-    return () => document.removeEventListener("keydown", onDocKey);
-    // requestClose closes over the latest draft state; re-bind each render.
-  });
-
-  return (
-    <>
-      <Overlay onClick={requestClose} aria-hidden />
-      <Aside
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Message to counterparty for ${trade.trade_id}`}
-        onKeyDown={onKey}
-      >
-        <Header>
-          <div style={{ minWidth: 0 }}>
-            <Eyebrow>Message to counterparty</Eyebrow>
-            <Title>
-              {trade.counterparty_name} · {trade.trade_id}
-            </Title>
-          </div>
-          <Button $variant="ghost" $size="sm" onClick={requestClose} aria-label="Close">
-            ✕
-          </Button>
-        </Header>
-
-        <Body>
-          <Disclosure role="note">
-            Sending will log this message as a note on the trade. Outbound
-            delivery to the counterparty is handled downstream.
-          </Disclosure>
-
-          <FieldRow>
-            <FieldLabel>From</FieldLabel>
-            <FieldStatic>{CURRENT_USER}</FieldStatic>
-            <span />
-          </FieldRow>
-
-          <FieldRow>
-            <FieldLabel htmlFor="to">To</FieldLabel>
-            <FieldInput
-              id="to"
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-              placeholder="counterparty.contact@bankofamerica.com"
-            />
-            {!showCc ? (
-              <InlineLink type="button" onClick={() => setShowCc(true)}>
-                Add Cc
-              </InlineLink>
-            ) : (
-              <span />
-            )}
-          </FieldRow>
-
-          {showCc && (
-            <FieldRow>
-              <FieldLabel htmlFor="cc">Cc</FieldLabel>
-              <FieldInput
-                id="cc"
-                value={cc}
-                onChange={(e) => setCc(e.target.value)}
-                placeholder="optional"
-              />
-              <span />
-            </FieldRow>
-          )}
-
-          <FieldRow>
-            <FieldLabel htmlFor="subject">Subject</FieldLabel>
-            <FieldInput
-              id="subject"
-              value={subject}
-              onChange={(e) => setSubject(e.target.value)}
-            />
-            <span />
-          </FieldRow>
-
-          {bodyMax > 0 && bodyMax <= LOW_BODY_BUDGET && (
-            <BudgetWarning role="status">
-              Long recipients/subject leave little room for the message —
-              consider trimming.
-            </BudgetWarning>
-          )}
-
-          <BodyArea
-            ref={bodyRef}
-            aria-label="Message body"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            placeholder="Write your message…"
-            maxLength={bodyMax}
-          />
-
-          {emails.length > 0 ? (
-            <ThreadContext>
-              <ThreadHeader>
-                <span className="title">Thread context for reference</span>
-                <span className="subtitle">
-                  The note records your message; the thread stays on the trade.
-                </span>
-              </ThreadHeader>
-              <ThreadList>
-                {emails.map((e) => (
-                  <ThreadContextRow key={e.id} email={e} />
-                ))}
-              </ThreadList>
-            </ThreadContext>
-          ) : null}
-        </Body>
-
-        <Footer>
-          <FooterStatus>
-            {displayError && <ErrorText>{displayError}</ErrorText>}
-            <Counter aria-live="polite" $danger={body.length > bodyMax}>
-              {body.length} / {bodyMax}
-            </Counter>
-          </FooterStatus>
-          <FooterActions>
-            <KbdHint aria-hidden>
-              <Kbd>⌘</Kbd>
-              <Kbd>↵</Kbd>
-            </KbdHint>
-            <Button $variant="ghost" $size="sm" onClick={requestClose}>
-              Cancel
-            </Button>
-            <Button
-              $variant="primary"
-              $size="sm"
-              onClick={send}
-              disabled={isLoading || bodyMax === 0}
-            >
-              {isLoading ? (
-                <>
-                  <Spinner /> Sending
-                </>
-              ) : (
-                "Send"
-              )}
-            </Button>
-          </FooterActions>
-        </Footer>
-      </Aside>
-    </>
-  );
-}
-
-function ThreadContextRow({ email }: { email: Email }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <ThreadRow>
-      <ThreadRowMain>
-        <ThreadRowButton
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-        >
-          <ThreadRowTopLine>
-            <span className="left">
-              <Caret $open={open} aria-hidden>
-                <path
-                  d="M4 2l4 4-4 4"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  fill="none"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </Caret>
-              <span className="from">{email.from_name}</span>
-            </span>
-            <span className="when">{formatDateTime(email.sent_at)}</span>
-          </ThreadRowTopLine>
-          <ThreadRowSubject>
-            {email.subject || "(no subject)"}
-          </ThreadRowSubject>
-        </ThreadRowButton>
-      </ThreadRowMain>
-      {open && (
-        <ThreadRowExpanded>
-          <p className="meta">
-            To: {email.to.map((r) => r.name).join(", ")}
-            {email.cc.length > 0 ? (
-              <> · Cc: {email.cc.map((r) => r.name).join(", ")}</>
-            ) : null}
-          </p>
-          <pre>{email.body || "(no body)"}</pre>
-        </ThreadRowExpanded>
-      )}
-    </ThreadRow>
-  );
-}
-
-export function isReplyNote(content: string): boolean {
-  return content.startsWith(REPLY_NOTE_PREFIX);
-}
-
-// =============================================================================
-//  Styled-components
-// =============================================================================
 
 const Overlay = styled.div`
   position: fixed;
@@ -681,3 +359,312 @@ const Kbd = styled.kbd`
   background: ${({ theme }) => theme.colors.surface};
   color: ${({ theme }) => theme.colors.textMuted};
 `;
+
+interface ComposerDrawerProps {
+  trade: TradeDetail;
+  onClose: () => void;
+  onSent?: () => void;
+}
+
+export function ComposerDrawer({ trade, onClose, onSent }: ComposerDrawerProps) {
+  const emails = trade.emails;
+  const [to, setTo] = useState("");
+  const [cc, setCc] = useState("");
+  const [showCc, setShowCc] = useState(false);
+  const [subject, setSubject] = useState(
+    `[${trade.trade_id}] ${trade.counterparty_name} — `,
+  );
+  const [body, setBody] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const [submitNote, { isLoading }] = useSubmitNoteMutation();
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+
+  // Capture the element that opened the drawer so we can return focus on close.
+  const previouslyFocused = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    previouslyFocused.current = document.activeElement as HTMLElement | null;
+    bodyRef.current?.focus();
+
+    // Lock body scroll while the drawer is open.
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      previouslyFocused.current?.focus?.();
+    };
+  }, []);
+
+  function validateEmails(s: string) {
+    if (!s.trim()) return true;
+    return s
+      .split(",")
+      .map((p) => p.trim())
+      .every((p) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p));
+  }
+
+  const buildNoteContent = (bodyText: string): string =>
+    buildReplyNote({
+      from: CURRENT_USER,
+      to,
+      cc: cc || undefined,
+      subject,
+      body: bodyText,
+      sentAt: new Date().toISOString(),
+    });
+
+  const headerLen = buildNoteContent("").length;
+  const bodyMax = Math.max(0, MAX_NOTE_LENGTH - headerLen);
+
+  const budgetError =
+    bodyMax === 0
+      ? "Recipients/subject already use the full message budget. Shorten them to add a body."
+      : null;
+  const displayError = budgetError ?? error;
+
+  async function send() {
+    if (isLoading) return;
+    setError(null);
+    if (!to.trim()) return setError("Enter at least one recipient.");
+    if (!validateEmails(to) || !validateEmails(cc))
+      return setError("One of the addresses doesn't look valid.");
+    if (!subject.trim()) return setError("Subject is required.");
+    if (!body.trim()) return setError("Message body can't be empty.");
+
+    const noteContent = buildNoteContent(body);
+    if (noteContent.length > MAX_NOTE_LENGTH) {
+      return setError("Message is too long. Shorten the body or recipients.");
+    }
+
+    const result = await submitNote({
+      tradeId: trade.id,
+      content: noteContent,
+    });
+    if ("error" in result) {
+      setError("Couldn't log the message. Try again.");
+      return;
+    }
+    onSent?.();
+    onClose();
+  }
+
+  // Guard against accidentally discarding a draft. Confirm only when there's
+  // user-typed content — the prefilled subject doesn't count.
+  function requestClose() {
+    if (body.trim() || to.trim() || cc.trim()) {
+      if (!window.confirm("Discard this draft?")) return;
+    }
+    onClose();
+  }
+
+  function onKey(e: React.KeyboardEvent) {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      void send();
+    }
+  }
+
+  // Escape closes from anywhere in the document, not only when focus is
+  // inside the drawer (e.g. user has tabbed out). Goes through requestClose
+  // so an in-progress draft isn't silently lost.
+  useEffect(() => {
+    const onDocKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        requestClose();
+      }
+    };
+    document.addEventListener("keydown", onDocKey);
+    return () => document.removeEventListener("keydown", onDocKey);
+    // requestClose closes over the latest draft state; re-bind each render.
+  });
+
+  return (
+    <>
+      <Overlay onClick={requestClose} aria-hidden />
+      <Aside
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Message to counterparty for ${trade.trade_id}`}
+        onKeyDown={onKey}
+      >
+        <Header>
+          <div style={{ minWidth: 0 }}>
+            <Eyebrow>Message to counterparty</Eyebrow>
+            <Title>
+              {trade.counterparty_name} · {trade.trade_id}
+            </Title>
+          </div>
+          <Button $variant="ghost" $size="sm" onClick={requestClose} aria-label="Close">
+            ✕
+          </Button>
+        </Header>
+
+        <Body>
+          <Disclosure role="note">
+            Sending will log this message as a note on the trade. Outbound
+            delivery to the counterparty is handled downstream.
+          </Disclosure>
+
+          <FieldRow>
+            <FieldLabel>From</FieldLabel>
+            <FieldStatic>{CURRENT_USER}</FieldStatic>
+            <span />
+          </FieldRow>
+
+          <FieldRow>
+            <FieldLabel htmlFor="to">To</FieldLabel>
+            <FieldInput
+              id="to"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              placeholder="counterparty.contact@bankofamerica.com"
+            />
+            {!showCc ? (
+              <InlineLink type="button" onClick={() => setShowCc(true)}>
+                Add Cc
+              </InlineLink>
+            ) : (
+              <span />
+            )}
+          </FieldRow>
+
+          {showCc && (
+            <FieldRow>
+              <FieldLabel htmlFor="cc">Cc</FieldLabel>
+              <FieldInput
+                id="cc"
+                value={cc}
+                onChange={(e) => setCc(e.target.value)}
+                placeholder="optional"
+              />
+              <span />
+            </FieldRow>
+          )}
+
+          <FieldRow>
+            <FieldLabel htmlFor="subject">Subject</FieldLabel>
+            <FieldInput
+              id="subject"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+            />
+            <span />
+          </FieldRow>
+
+          {bodyMax > 0 && bodyMax <= LOW_BODY_BUDGET && (
+            <BudgetWarning role="status">
+              Long recipients/subject leave little room for the message —
+              consider trimming.
+            </BudgetWarning>
+          )}
+
+          <BodyArea
+            ref={bodyRef}
+            aria-label="Message body"
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            placeholder="Write your message…"
+            maxLength={bodyMax}
+          />
+
+          {emails.length > 0 ? (
+            <ThreadContext>
+              <ThreadHeader>
+                <span className="title">Thread context for reference</span>
+                <span className="subtitle">
+                  The note records your message; the thread stays on the trade.
+                </span>
+              </ThreadHeader>
+              <ThreadList>
+                {emails.map((e) => (
+                  <ThreadContextRow key={e.id} email={e} />
+                ))}
+              </ThreadList>
+            </ThreadContext>
+          ) : null}
+        </Body>
+
+        <Footer>
+          <FooterStatus>
+            {displayError && <ErrorText>{displayError}</ErrorText>}
+            <Counter aria-live="polite" $danger={body.length > bodyMax}>
+              {body.length} / {bodyMax}
+            </Counter>
+          </FooterStatus>
+          <FooterActions>
+            <KbdHint aria-hidden>
+              <Kbd>⌘</Kbd>
+              <Kbd>↵</Kbd>
+            </KbdHint>
+            <Button $variant="ghost" $size="sm" onClick={requestClose}>
+              Cancel
+            </Button>
+            <Button
+              $variant="primary"
+              $size="sm"
+              onClick={send}
+              disabled={isLoading || bodyMax === 0}
+            >
+              {isLoading ? (
+                <>
+                  <Spinner /> Sending
+                </>
+              ) : (
+                "Send"
+              )}
+            </Button>
+          </FooterActions>
+        </Footer>
+      </Aside>
+    </>
+  );
+}
+
+function ThreadContextRow({ email }: { email: Email }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <ThreadRow>
+      <ThreadRowMain>
+        <ThreadRowButton
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+        >
+          <ThreadRowTopLine>
+            <span className="left">
+              <Caret $open={open} aria-hidden>
+                <path
+                  d="M4 2l4 4-4 4"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  fill="none"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </Caret>
+              <span className="from">{email.from_name}</span>
+            </span>
+            <span className="when">{formatDateTime(email.sent_at)}</span>
+          </ThreadRowTopLine>
+          <ThreadRowSubject>
+            {email.subject || "(no subject)"}
+          </ThreadRowSubject>
+        </ThreadRowButton>
+      </ThreadRowMain>
+      {open && (
+        <ThreadRowExpanded>
+          <p className="meta">
+            To: {email.to.map((r) => r.name).join(", ")}
+            {email.cc.length > 0 ? (
+              <> · Cc: {email.cc.map((r) => r.name).join(", ")}</>
+            ) : null}
+          </p>
+          <pre>{email.body || "(no body)"}</pre>
+        </ThreadRowExpanded>
+      )}
+    </ThreadRow>
+  );
+}
