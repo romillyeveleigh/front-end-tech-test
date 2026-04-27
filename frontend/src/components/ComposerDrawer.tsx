@@ -102,28 +102,6 @@ export function ComposerDrawer({ trade, onClose, onSent }: ComposerDrawerProps) 
       setError("Couldn't log the message. Try again.");
       return;
     }
-    // #region agent log
-    fetch("http://127.0.0.1:7937/ingest/cec45640-9a6b-4b35-a7ab-d9666d837ff9", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "bbfb5f",
-      },
-      body: JSON.stringify({
-        sessionId: "bbfb5f",
-        location: "ComposerDrawer.tsx:send",
-        message: "submitNote mutation fulfilled",
-        data: {
-          tradeId: trade.id,
-          preSubmitNotesCount: trade.notes.length,
-          newNoteId: "data" in result && result.data ? result.data.id : null,
-        },
-        timestamp: Date.now(),
-        hypothesisId: "A",
-        runId: "verify-cache",
-      }),
-    }).catch(() => {});
-    // #endregion
     onSent?.();
     onClose();
   }

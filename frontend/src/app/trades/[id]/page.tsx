@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useState } from "react";
 import Link from "next/link";
 import styled from "styled-components";
 import { useGetTradeQuery } from "@/lib/api/tradesApi";
@@ -38,40 +38,6 @@ export default function TradeDetailPage({
   const { id } = use(params);
   const query = useGetTradeQuery(id);
   const [composerOpen, setComposerOpen] = useState(false);
-
-  // #region agent log
-  useEffect(() => {
-    if (!query.data) return;
-    fetch("http://127.0.0.1:7937/ingest/cec45640-9a6b-4b35-a7ab-d9666d837ff9", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "bbfb5f",
-      },
-      body: JSON.stringify({
-        sessionId: "bbfb5f",
-        location: "trades/[id]/page.tsx:useEffect",
-        message: "getTrade snapshot",
-        data: {
-          queryId: id,
-          dataTradeId: query.data.id,
-          notesCount: query.data.notes.length,
-          isFetching: query.isFetching,
-          fulfilledTimeStamp: query.fulfilledTimeStamp,
-        },
-        timestamp: Date.now(),
-        hypothesisId: "A",
-        runId: "verify-cache",
-      }),
-    }).catch(() => {});
-  }, [
-    id,
-    query.data,
-    query.data?.notes.length,
-    query.isFetching,
-    query.fulfilledTimeStamp,
-  ]);
-  // #endregion
 
   if (query.isLoading) {
     return <div>loading...</div>;
